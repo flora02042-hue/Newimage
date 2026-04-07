@@ -380,6 +380,23 @@ class ArtworkBackend {
                 const pic = await grabPlayerPicture();
                 if (pic) refs.push(pic);
             }
+
+            // Add Vision wardrobe reference image if available
+            try {
+                const ctx = SillyTavern.getContext();
+                const charName = ctx.characters?.[ctx.characterId]?.name || '__global__';
+                const wardrobeKey = `${PLUGIN_ID}_wardrobe`;
+                const stored = ctx.extensionSettings[wardrobeKey];
+                const visionRef = stored?.[charName]?._visionRefImage;
+                if (visionRef) {
+                    const visionB64 = await blobToBase64(visionRef);
+                    if (visionB64) {
+                        refs.push(visionB64);
+                        diag.info('Vision wardrobe reference image added');
+                    }
+                }
+            } catch (e) { diag.warn('Could not load vision ref:', e.message); }
+
             diag.info(`Reference images collected: ${refs.length}`);
         }
 
@@ -1218,7 +1235,7 @@ const SillyWardrobe = (() => {
             });
         }
 
-        // Vision button — detect outfits from uploaded image
+        // Vision button — detect outfits from uploaded image, auto-add & activate
         modal.querySelector('.pc-wardrobe-vision-btn')?.addEventListener('click', async () => {
             const fileInput = modal.querySelector('.pc-wardrobe-vision-file');
             const resultsDiv = modal.querySelector('.pc-wardrobe-vision-results');
@@ -1240,11 +1257,27 @@ const SillyWardrobe = (() => {
                     reader.readAsDataURL(file);
                 });
 
-                const description = await VisionAPI.detectOutfit(base64);
-                diag.info(`Vision detected: ${description.slice(0, 200)}`);
+                // Save the image as a reference for future generations
+                const dataUrl = `data:image/${file.type.split('/')[1] || 'png'};base64,${base64}`;
+                try {
+                    const refPath = await uploadGeneratedImage(dataUrl);
+                    // Store reference image path in wardrobe storage
+                    const ctx = SillyTavern.getContext();
+                    const charName = ctx.characters?.[ctx.characterId]?.name || '__global__';
+                    const stored = ctx.extensionSettings[STORAGE_KEY] || {};
+                    if (!stored[charName]) stored[charName] = { char: [], user: [] };
+                    stored[charName]._visionRefImage = refPath;
+                    ctx.extensionSettings[STORAGE_KEY] = stored;
+                    _save();
+                    diag.info(`Vision reference image saved: ${refPath}`);
+                } catch (e) {
+                    diag.warn('Could not save vision reference image:', e.message);
+                }
 
-                // Parse the description into individual outfit items
-                // Split by newlines or sentences
+                const description = await VisionAPI.detectOutfit(base64);
+                diag.info(`Vision detected: ${description.slice(0, 300)}`);
+
+                // Parse into lines
                 const lines = description.split(/[\n\r]+/).filter(l => l.trim().length > 5);
                 
                 if (!lines.length) {
@@ -1252,41 +1285,33 @@ const SillyWardrobe = (() => {
                     return;
                 }
 
+                // Auto-add ALL detected items to CHAR wardrobe and ACTIVATE them
+                const outfits = _getOutfits();
+                const addedItems = [];
+                for (const line of lines) {
+                    const text = line.trim();
+                    // Avoid duplicates
+                    const exists = outfits.char.some(o => o.description.toLowerCase() === text.toLowerCase());
+                    if (!exists) {
+                        outfits.char.push({ description: text, active: true, timestamp: Date.now() });
+                        addedItems.push(text);
+                    }
+                }
+                _save();
+                _renderList('char', outfits.char);
+
+                // Show results with indication they were auto-added
                 resultsDiv.innerHTML = `
-                    <p class="pc-hint" style="margin-bottom:6px;">Результаты Vision:</p>
-                    ${lines.map((line, i) => `
-                        <div class="pc-wardrobe-scan-item">
-                            <span>${escapeHtmlText(line.trim())}</span>
-                            <div class="menu_button pc-vision-adopt-char" data-vidx="${i}" title="Добавить для {{char}}"><i class="fa-solid fa-user-pen"></i></div>
-                            <div class="menu_button pc-vision-adopt-user" data-vidx="${i}" title="Добавить для {{user}}"><i class="fa-solid fa-user"></i></div>
+                    <p class="pc-hint" style="margin-bottom:6px;color:#7f7;">✅ Распознано и добавлено в гардероб {{char}} (${addedItems.length} шт.):</p>
+                    ${addedItems.map(item => `
+                        <div class="pc-wardrobe-scan-item" style="border-left:3px solid #7f7;padding-left:8px;">
+                            <span>✓ ${escapeHtmlText(item)}</span>
                         </div>
                     `).join('')}
+                    <p class="pc-hint" style="margin-top:8px;">Аутфиты активированы и будут добавлены в промпт генерации. Для переноса в {{user}} — используйте списки выше.</p>
                 `;
 
-                // Wire adopt buttons
-                const visionLines = lines.map(l => l.trim());
-                for (const btn of resultsDiv.querySelectorAll('.pc-vision-adopt-char')) {
-                    btn.addEventListener('click', () => {
-                        const idx = parseInt(btn.dataset.vidx);
-                        const outfits = _getOutfits();
-                        outfits.char.push({ description: visionLines[idx], active: false, timestamp: Date.now() });
-                        _save();
-                        _renderList('char', outfits.char);
-                        btn.remove();
-                        toastr.success('Добавлено для персонажа', 'Гардероб');
-                    });
-                }
-                for (const btn of resultsDiv.querySelectorAll('.pc-vision-adopt-user')) {
-                    btn.addEventListener('click', () => {
-                        const idx = parseInt(btn.dataset.vidx);
-                        const outfits = _getOutfits();
-                        outfits.user.push({ description: visionLines[idx], active: false, timestamp: Date.now() });
-                        _save();
-                        _renderList('user', outfits.user);
-                        btn.remove();
-                        toastr.success('Добавлено для пользователя', 'Гардероб');
-                    });
-                }
+                toastr.success(`Распознано ${addedItems.length} аутфитов и активировано`, 'Гардероб');
             } catch (err) {
                 diag.error('Vision outfit detection failed:', err.message);
                 resultsDiv.innerHTML = `<p class="pc-hint" style="color: #ff6666;">Ошибка Vision: ${escapeHtmlText(err.message)}</p>`;
