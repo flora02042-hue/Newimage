@@ -1175,9 +1175,16 @@ const SillyWardrobe = (() => {
                     <hr>
                     <div class="pc-wardrobe-section">
                         <h4><i class="fa-solid fa-eye"></i> Определить по картинке (Vision)</h4>
-                        <p class="pc-hint">Загрузите скриншот или картинку — Vision-модель определит одежду персонажей.</p>
-                        <div class="pc-wardrobe-add-row">
-                            <input type="file" class="pc-wardrobe-vision-file" accept="image/*" style="flex:1;">
+                        <p class="pc-hint">Загрузите скриншот или картинку — Vision-модель определит одежду и добавит в гардероб.</p>
+                        <div class="pc-wardrobe-vision-preview-wrap" style="display:none;margin:8px 0;text-align:center;">
+                            <img class="pc-wardrobe-vision-preview" style="max-width:200px;max-height:200px;border-radius:8px;border:2px solid var(--SmartThemeBorderColor);">
+                            <p class="pc-hint" style="margin-top:4px;"><i class="fa-solid fa-check-circle" style="color:#7f7;"></i> Картинка будет использована как референс</p>
+                        </div>
+                        <div class="pc-wardrobe-add-row" style="gap:8px;">
+                            <label class="menu_button pc-wardrobe-file-label" style="flex:1;text-align:center;cursor:pointer;position:relative;overflow:hidden;">
+                                <i class="fa-solid fa-image"></i> Выбрать картинку
+                                <input type="file" class="pc-wardrobe-vision-file" accept="image/*" style="position:absolute;opacity:0;width:100%;height:100%;left:0;top:0;cursor:pointer;">
+                            </label>
                             <div class="menu_button pc-wardrobe-vision-btn" title="Распознать"><i class="fa-solid fa-wand-magic-sparkles"></i> Распознать</div>
                         </div>
                         <div class="pc-wardrobe-vision-results"></div>
@@ -1234,6 +1241,23 @@ const SillyWardrobe = (() => {
                 }
             });
         }
+
+        // File input — show preview when file selected
+        modal.querySelector('.pc-wardrobe-vision-file')?.addEventListener('change', (e) => {
+            const previewWrap = modal.querySelector('.pc-wardrobe-vision-preview-wrap');
+            const previewImg = modal.querySelector('.pc-wardrobe-vision-preview');
+            const fileLabel = modal.querySelector('.pc-wardrobe-file-label');
+            if (e.target.files?.length) {
+                const file = e.target.files[0];
+                const url = URL.createObjectURL(file);
+                previewImg.src = url;
+                previewWrap.style.display = 'block';
+                if (fileLabel) fileLabel.innerHTML = `<i class="fa-solid fa-check"></i> ${escapeHtmlText(file.name.slice(0, 30))}`;
+            } else {
+                previewWrap.style.display = 'none';
+                if (fileLabel) fileLabel.innerHTML = '<i class="fa-solid fa-image"></i> Выбрать картинку';
+            }
+        });
 
         // Vision button — detect outfits from uploaded image, auto-add & activate
         modal.querySelector('.pc-wardrobe-vision-btn')?.addEventListener('click', async () => {
