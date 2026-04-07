@@ -72,6 +72,15 @@ const DEFAULTS = Object.freeze({
     playerPicFilename: '',
     ratio: '1:1',
     resolution: '1K',
+    // Vision API for wardrobe outfit detection from images
+    visionEndpointUrl: '',
+    visionSecret: '',
+    visionModel: '',
+    // Descriptor API for prompt enhancement via text LLM
+    descriptorEndpointUrl: '',
+    descriptorSecret: '',
+    descriptorModel: '',
+    descriptorEnabled: false,
 });
 
 class ConfigManager {
@@ -87,7 +96,17 @@ class ConfigManager {
         return s;
     }
     static persist() {
-        SillyTavern.getContext().saveSettingsDebounced();
+        const ctx = SillyTavern.getContext();
+        ctx.saveSettingsDebounced();
+    }
+    /** Force immediate save — use for critical fields like API keys */
+    static forceSave() {
+        const ctx = SillyTavern.getContext();
+        if (typeof ctx.saveSettings === 'function') {
+            ctx.saveSettings();
+        } else {
+            ctx.saveSettingsDebounced();
+        }
     }
     static verify() {
         const cfg = this.load();
@@ -211,7 +230,7 @@ async function queryPlayerAvatarList() {
 // ─── Prompt Composer ─────────────────────────────────────────────────────────
 
 class PromptComposer {
-    static assemble(baseText, styleHint) {
+    static async assemble(baseText, styleHint) {
         const segments = [];
         if (styleHint) segments.push(`[Style: ${styleHint}]`);
 
@@ -225,7 +244,15 @@ class PromptComposer {
         } catch { /* wardrobe not ready yet */ }
 
         segments.push(baseText);
-        const composed = segments.join('\n\n');
+        let composed = segments.join('\n\n');
+
+        // Enhance via Descriptor API (text LLM) if enabled
+        try {
+            composed = await DescriptorAPI.enhance(composed);
+        } catch (e) {
+            diag.warn('Descriptor enhancement skipped:', e.message);
+        }
+
         diag.info(`Composed prompt: ${composed.length} chars, ${segments.length} segments`);
         return composed;
     }
@@ -237,7 +264,7 @@ class ArtworkBackend {
     static async callOpenAI(description, styleHint, refs = [], opts = {}) {
         const cfg = ConfigManager.load();
         const apiUrl = `${cfg.endpointUrl.replace(/\/$/, '')}/v1/images/generations`;
-        const composed = PromptComposer.assemble(description, styleHint);
+        const composed = await PromptComposer.assemble(description, styleHint);
 
         let dim = cfg.dimensions;
         if (opts.aspectRatio === '16:9') dim = '1792x1024';
@@ -298,7 +325,7 @@ class ArtworkBackend {
             contentParts.push({ inlineData: { mimeType: 'image/png', data: b64 } });
         }
 
-        let composed = PromptComposer.assemble(description, styleHint);
+        let composed = await PromptComposer.assemble(description, styleHint);
         if (refs.length > 0) {
             const refNote = '[CRITICAL: The reference image(s) above show the EXACT appearance of the character(s). You MUST precisely copy their: face structure, eye color, hair color and style, skin tone, body type, clothing, and all distinctive features. Do not deviate from the reference appearances.]';
             composed = `${refNote}\n\n${composed}`;
@@ -377,6 +404,71 @@ class ArtworkBackend {
             }
         }
         throw lastErr;
+    }
+}
+
+// ─── Vision API — Outfit Detection from Images ──────────────────────────────
+
+class VisionAPI {
+    static async detectOutfit(imageBase64) {
+        const cfg = ConfigManager.load();
+        if (!cfg.visionEndpointUrl || !cfg.visionSecret || !cfg.visionModel) {
+            throw new Error('Vision API не настроен (URL / ключ / модель)');
+        }
+        const url = `${cfg.visionEndpointUrl.replace(/\/$/, '')}/v1/chat/completions`;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${cfg.visionSecret}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: cfg.visionModel,
+                messages: [{
+                    role: 'user',
+                    content: [
+                        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
+                        { type: 'text', text: 'Describe in detail what each person in this image is wearing. List clothing items separately for each character. Be specific about colors, styles, and accessories. Answer in English.' },
+                    ],
+                }],
+                max_tokens: 500,
+            }),
+        });
+        if (!resp.ok) { const t = await resp.text(); throw new Error(`Vision API (${resp.status}): ${t}`); }
+        const data = await resp.json();
+        return data.choices?.[0]?.message?.content || 'No description';
+    }
+}
+
+// ─── Descriptor API — Prompt Enhancement via Text LLM ────────────────────────
+
+class DescriptorAPI {
+    static async enhance(rawPrompt) {
+        const cfg = ConfigManager.load();
+        if (!cfg.descriptorEnabled || !cfg.descriptorEndpointUrl || !cfg.descriptorSecret || !cfg.descriptorModel) {
+            return rawPrompt;
+        }
+        try {
+            const url = `${cfg.descriptorEndpointUrl.replace(/\/$/, '')}/v1/chat/completions`;
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${cfg.descriptorSecret}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: cfg.descriptorModel,
+                    messages: [
+                        { role: 'system', content: 'You are an expert image prompt writer. Rewrite the given prompt to be more detailed and vivid for image generation. Keep the same scene and characters. Add artistic details, lighting, composition. Output ONLY the enhanced prompt, nothing else.' },
+                        { role: 'user', content: rawPrompt },
+                    ],
+                    max_tokens: 600,
+                    temperature: 0.7,
+                }),
+            });
+            if (!resp.ok) { diag.warn(`Descriptor API error: ${resp.status}`); return rawPrompt; }
+            const data = await resp.json();
+            const enhanced = data.choices?.[0]?.message?.content?.trim();
+            if (enhanced && enhanced.length > 10) {
+                diag.info(`Prompt enhanced: ${enhanced.slice(0, 100)}...`);
+                return enhanced;
+            }
+            return rawPrompt;
+        } catch (e) { diag.warn('Descriptor API failed:', e.message); return rawPrompt; }
     }
 }
 
@@ -1065,6 +1157,16 @@ const SillyWardrobe = (() => {
                     </div>
                     <hr>
                     <div class="pc-wardrobe-section">
+                        <h4><i class="fa-solid fa-eye"></i> Определить по картинке (Vision)</h4>
+                        <p class="pc-hint">Загрузите скриншот или картинку — Vision-модель определит одежду персонажей.</p>
+                        <div class="pc-wardrobe-add-row">
+                            <input type="file" class="pc-wardrobe-vision-file" accept="image/*" style="flex:1;">
+                            <div class="menu_button pc-wardrobe-vision-btn" title="Распознать"><i class="fa-solid fa-wand-magic-sparkles"></i> Распознать</div>
+                        </div>
+                        <div class="pc-wardrobe-vision-results"></div>
+                    </div>
+                    <hr>
+                    <div class="pc-wardrobe-section">
                         <h4><i class="fa-solid fa-magnifying-glass"></i> Анализ из чата</h4>
                         <p class="pc-hint">Поиск упоминаний одежды в последних сообщениях чата.</p>
                         <div class="pc-wardrobe-add-row">
@@ -1115,6 +1217,82 @@ const SillyWardrobe = (() => {
                 }
             });
         }
+
+        // Vision button — detect outfits from uploaded image
+        modal.querySelector('.pc-wardrobe-vision-btn')?.addEventListener('click', async () => {
+            const fileInput = modal.querySelector('.pc-wardrobe-vision-file');
+            const resultsDiv = modal.querySelector('.pc-wardrobe-vision-results');
+            
+            if (!fileInput?.files?.length) {
+                toastr.warning('Выберите изображение', 'Гардероб');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            resultsDiv.innerHTML = '<p class="pc-hint"><i class="fa-solid fa-spinner fa-spin"></i> Анализ изображения через Vision API...</p>';
+
+            try {
+                // Convert file to base64
+                const base64 = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+
+                const description = await VisionAPI.detectOutfit(base64);
+                diag.info(`Vision detected: ${description.slice(0, 200)}`);
+
+                // Parse the description into individual outfit items
+                // Split by newlines or sentences
+                const lines = description.split(/[\n\r]+/).filter(l => l.trim().length > 5);
+                
+                if (!lines.length) {
+                    resultsDiv.innerHTML = '<p class="pc-hint">Vision не смогла определить одежду.</p>';
+                    return;
+                }
+
+                resultsDiv.innerHTML = `
+                    <p class="pc-hint" style="margin-bottom:6px;">Результаты Vision:</p>
+                    ${lines.map((line, i) => `
+                        <div class="pc-wardrobe-scan-item">
+                            <span>${escapeHtmlText(line.trim())}</span>
+                            <div class="menu_button pc-vision-adopt-char" data-vidx="${i}" title="Добавить для {{char}}"><i class="fa-solid fa-user-pen"></i></div>
+                            <div class="menu_button pc-vision-adopt-user" data-vidx="${i}" title="Добавить для {{user}}"><i class="fa-solid fa-user"></i></div>
+                        </div>
+                    `).join('')}
+                `;
+
+                // Wire adopt buttons
+                const visionLines = lines.map(l => l.trim());
+                for (const btn of resultsDiv.querySelectorAll('.pc-vision-adopt-char')) {
+                    btn.addEventListener('click', () => {
+                        const idx = parseInt(btn.dataset.vidx);
+                        const outfits = _getOutfits();
+                        outfits.char.push({ description: visionLines[idx], active: false, timestamp: Date.now() });
+                        _save();
+                        _renderList('char', outfits.char);
+                        btn.remove();
+                        toastr.success('Добавлено для персонажа', 'Гардероб');
+                    });
+                }
+                for (const btn of resultsDiv.querySelectorAll('.pc-vision-adopt-user')) {
+                    btn.addEventListener('click', () => {
+                        const idx = parseInt(btn.dataset.vidx);
+                        const outfits = _getOutfits();
+                        outfits.user.push({ description: visionLines[idx], active: false, timestamp: Date.now() });
+                        _save();
+                        _renderList('user', outfits.user);
+                        btn.remove();
+                        toastr.success('Добавлено для пользователя', 'Гардероб');
+                    });
+                }
+            } catch (err) {
+                diag.error('Vision outfit detection failed:', err.message);
+                resultsDiv.innerHTML = `<p class="pc-hint" style="color: #ff6666;">Ошибка Vision: ${escapeHtmlText(err.message)}</p>`;
+                toastr.error(`Vision: ${err.message}`, 'Гардероб');
+            }
+        });
 
         // Scan button
         modal.querySelector('.pc-wardrobe-scan-btn')?.addEventListener('click', () => {
@@ -1404,6 +1582,40 @@ function assemblePanel() {
                     </div>
                 </div>
                 <hr>
+                <h4>🔍 Vision API (определение одежды)</h4>
+                <p class="pc-hint">Vision-модель для распознавания одежды по картинкам в гардеробе.</p>
+                <div class="pc-row">
+                    <label for="pc_vision_endpoint">URL</label>
+                    <input type="text" id="pc_vision_endpoint" class="text_pole pc-grow" value="${cfg.visionEndpointUrl || ''}" placeholder="https://api.example.com">
+                </div>
+                <div class="pc-row">
+                    <label for="pc_vision_secret">Ключ</label>
+                    <input type="password" id="pc_vision_secret" class="text_pole pc-grow" value="${cfg.visionSecret || ''}">
+                </div>
+                <div class="pc-row">
+                    <label for="pc_vision_model">Модель</label>
+                    <input type="text" id="pc_vision_model" class="text_pole pc-grow" value="${cfg.visionModel || ''}" placeholder="gpt-4o / gemini-pro-vision">
+                </div>
+                <hr>
+                <h4>✨ Descriptor API (улучшение промпта)</h4>
+                <p class="pc-hint">Текстовая LLM для автоматического улучшения промпта перед генерацией.</p>
+                <label class="checkbox_label">
+                    <input type="checkbox" id="pc_desc_enabled" ${cfg.descriptorEnabled ? 'checked' : ''}>
+                    <span>Включить улучшение промпта</span>
+                </label>
+                <div class="pc-row">
+                    <label for="pc_desc_endpoint">URL</label>
+                    <input type="text" id="pc_desc_endpoint" class="text_pole pc-grow" value="${cfg.descriptorEndpointUrl || ''}" placeholder="https://api.example.com">
+                </div>
+                <div class="pc-row">
+                    <label for="pc_desc_secret">Ключ</label>
+                    <input type="password" id="pc_desc_secret" class="text_pole pc-grow" value="${cfg.descriptorSecret || ''}">
+                </div>
+                <div class="pc-row">
+                    <label for="pc_desc_model">Модель</label>
+                    <input type="text" id="pc_desc_model" class="text_pole pc-grow" value="${cfg.descriptorModel || ''}" placeholder="gpt-4o-mini / claude-3-haiku">
+                </div>
+                <hr>
                 <h4>Повторные попытки</h4>
                 <div class="pc-row">
                     <label for="pc_attempts">Макс. повторов</label>
@@ -1447,7 +1659,9 @@ function wireUpPanel() {
         $('pc_nano_block')?.classList.toggle('pc-hidden', e.target.value !== 'gemini');
     });
 
+    $('pc_endpoint')?.addEventListener('change', e => { cfg.endpointUrl = e.target.value; ConfigManager.forceSave(); });
     $('pc_endpoint')?.addEventListener('input', e => { cfg.endpointUrl = e.target.value; ConfigManager.persist(); });
+    $('pc_secret')?.addEventListener('change', e => { cfg.secret = e.target.value; ConfigManager.forceSave(); });
     $('pc_secret')?.addEventListener('input', e => { cfg.secret = e.target.value; ConfigManager.persist(); });
 
     $('pc_eye')?.addEventListener('click', () => {
@@ -1537,6 +1751,23 @@ function wireUpPanel() {
     $('pc_pause')?.addEventListener('input', e => { cfg.pauseBetween = parseInt(e.target.value) || 1000; ConfigManager.persist(); });
     $('pc_dump_logs')?.addEventListener('click', () => diag.download());
     $('pc_open_wardrobe')?.addEventListener('click', () => SillyWardrobe.open());
+
+    // Vision API fields
+    $('pc_vision_endpoint')?.addEventListener('change', e => { cfg.visionEndpointUrl = e.target.value; ConfigManager.forceSave(); });
+    $('pc_vision_endpoint')?.addEventListener('input', e => { cfg.visionEndpointUrl = e.target.value; ConfigManager.persist(); });
+    $('pc_vision_secret')?.addEventListener('change', e => { cfg.visionSecret = e.target.value; ConfigManager.forceSave(); });
+    $('pc_vision_secret')?.addEventListener('input', e => { cfg.visionSecret = e.target.value; ConfigManager.persist(); });
+    $('pc_vision_model')?.addEventListener('change', e => { cfg.visionModel = e.target.value; ConfigManager.forceSave(); });
+    $('pc_vision_model')?.addEventListener('input', e => { cfg.visionModel = e.target.value; ConfigManager.persist(); });
+
+    // Descriptor API fields
+    $('pc_desc_enabled')?.addEventListener('change', e => { cfg.descriptorEnabled = e.target.checked; ConfigManager.persist(); });
+    $('pc_desc_endpoint')?.addEventListener('change', e => { cfg.descriptorEndpointUrl = e.target.value; ConfigManager.forceSave(); });
+    $('pc_desc_endpoint')?.addEventListener('input', e => { cfg.descriptorEndpointUrl = e.target.value; ConfigManager.persist(); });
+    $('pc_desc_secret')?.addEventListener('change', e => { cfg.descriptorSecret = e.target.value; ConfigManager.forceSave(); });
+    $('pc_desc_secret')?.addEventListener('input', e => { cfg.descriptorSecret = e.target.value; ConfigManager.persist(); });
+    $('pc_desc_model')?.addEventListener('change', e => { cfg.descriptorModel = e.target.value; ConfigManager.forceSave(); });
+    $('pc_desc_model')?.addEventListener('input', e => { cfg.descriptorModel = e.target.value; ConfigManager.persist(); });
 }
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
