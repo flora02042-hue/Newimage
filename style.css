@@ -1,167 +1,217 @@
-/* ═══════════════════════════════════════════════════════════════════
-   PictureCraft — Stylesheet
-   Completely new class names & structure (pc- prefix)
-   ═══════════════════════════════════════════════════════════════════ */
+/* PictureCraft — Extension Styles */
 
-/* ── Settings Panel ─────────────────────────────────────────────── */
+/* ─── Settings Panel ──────────────────────────────────────────────────────── */
 
 .pc-panel {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 }
 
-.pc-row {
+.pc-panel .pc-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
 }
 
-.pc-row > label {
-    min-width: 110px;
-    flex-shrink: 0;
+.pc-panel .pc-row > label {
+    min-width: 120px;
 }
 
-.pc-col {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    margin-bottom: 6px;
-}
-
-.pc-col > label {
-    font-size: .9em;
-    color: var(--SmartThemeBodyColor);
-}
-
-.pc-grow {
-    flex: 1 1 0;
-    min-width: 0;
+.pc-panel .pc-grow {
+    flex: 1;
 }
 
 .pc-panel hr {
-    margin: 8px 0;
-    border: 0;
+    margin: 10px 0;
+    border: none;
     border-top: 1px solid var(--SmartThemeBorderColor);
 }
 
 .pc-panel h4 {
-    margin: 4px 0;
+    margin: 5px 0;
     color: var(--SmartThemeBodyColor);
 }
 
 .pc-panel h5 {
-    margin: 6px 0 3px;
-    font-size: .95em;
+    margin: 8px 0 4px 0;
     color: var(--SmartThemeBodyColor);
+    font-size: 0.95em;
+}
+
+.pc-panel .pc-hint {
+    font-size: 0.85em;
+    color: var(--SmartThemeQuoteColor);
+    margin-top: 2px;
+}
+
+.pc-panel .pc-col {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 4px;
 }
 
-.pc-hint {
-    font-size: .83em;
-    color: var(--SmartThemeQuoteColor);
-    margin: 2px 0;
+.pc-panel .pc-col > label {
+    font-size: 0.9em;
+    color: var(--SmartThemeBodyColor);
 }
 
 .pc-panel textarea.text_pole {
     resize: vertical;
-    min-height: 46px;
+    min-height: 50px;
     font-family: inherit;
 }
 
-.pc-hidden {
-    display: none !important;
-}
-
-/* ── Nano-Banana Section ────────────────────────────────────────── */
+/* ─── Nano-banana section ─────────────────────────────────────────────────── */
 
 .pc-nano-block {
     padding: 10px;
     background: var(--SmartThemeBlurTintColor);
-    border-radius: 6px;
-    margin-top: 4px;
+    border-radius: 5px;
+    margin-top: 5px;
 }
 
-/* ── Buttons ────────────────────────────────────────────────────── */
+.pc-nano-block.pc-hidden,
+.pc-hidden {
+    display: none;
+}
+
+/* ─── Avatar preview thumbnail ────────────────────────────────────────────── */
+
+.pc-avatar-thumb {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 2px solid var(--SmartThemeBorderColor);
+    background: var(--SmartThemeBlurTintColor);
+}
+
+.pc-avatar-thumb.pc-hidden {
+    display: none;
+}
+
+/* ─── Buttons ─────────────────────────────────────────────────────────────── */
 
 .pc-sync-btn {
-    padding: 4px 9px;
+    padding: 5px 10px;
     cursor: pointer;
 }
 
-.pc-spinning i {
-    animation: pc-rotate 0.8s linear infinite;
+.pc-sync-btn.pc-spinning i {
+    animation: pc-spin 1s linear infinite;
 }
 
 .pc-eye-btn {
-    padding: 4px 9px;
+    padding: 5px 10px;
     cursor: pointer;
 }
 
-/* ── Active fixed style highlight ───────────────────────────────── */
-
-#pc_perm_style_on:checked + span {
-    color: var(--SmartThemeQuoteColor);
-    font-weight: 700;
-}
-
-/* ── Progress Spinner ───────────────────────────────────────────── */
+/* ─── Loading Spinner ─────────────────────────────────────────────────────── */
 
 .pc-progress-box {
     display: inline-flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: 140px;
-    min-width: 140px;
+    min-height: 150px;
+    min-width: 150px;
     max-width: 100%;
+    width: auto;
     background: var(--SmartThemeBlurTintColor);
-    border: 2px dashed var(--SmartThemeBorderColor);
     border-radius: 10px;
-    padding: 14px;
-    margin: 4px;
+    padding: 15px;
+    margin: 5px;
+    border: 2px dashed var(--SmartThemeBorderColor);
     box-sizing: border-box;
 }
 
 .pc-ring {
-    width: 36px;
-    height: 36px;
-    border: 3px solid var(--SmartThemeBorderColor);
+    width: 40px;
+    height: 40px;
+    border: 4px solid var(--SmartThemeBorderColor);
     border-top-color: var(--SmartThemeBodyColor);
     border-radius: 50%;
-    animation: pc-rotate 1s linear infinite;
+    animation: pc-spin 1s linear infinite;
 }
 
 .pc-progress-label {
-    margin-top: 8px;
-    font-size: .88em;
+    margin-top: 10px;
+    font-size: 0.9em;
     color: var(--SmartThemeQuoteColor);
 }
 
-@keyframes pc-rotate {
+@keyframes pc-spin {
     to { transform: rotate(360deg); }
 }
 
-/* ── Result Image ───────────────────────────────────────────────── */
+/* ─── Error Image ─────────────────────────────────────────────────────────── */
+
+.pc-fail-img {
+    display: block;
+    max-width: 300px;
+    min-width: 200px;
+    min-height: 150px;
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    border: 2px solid rgba(255, 100, 100, 0.5);
+    margin: 5px 0;
+}
+
+/* ─── Generated Image ─────────────────────────────────────────────────────── */
 
 .pc-result-img {
     max-width: 100%;
     border-radius: 8px;
-    margin: 8px 0;
+    margin: 10px 0;
+    display: block;
 }
 
-/* ── Failure Image ──────────────────────────────────────────────── */
+/* ─── Image Wrapper with Regen Button ─────────────────────────────────────── */
 
-.pc-fail-img {
+.pc-img-wrap {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    margin: 5px 0;
+}
+
+.pc-img-wrap .pc-result-img {
+    margin: 0;
     display: block;
-    max-width: 280px;
-    min-width: 180px;
-    min-height: 140px;
-    width: 100%;
-    height: auto;
-    border: 2px solid rgba(255, 90, 90, 0.5);
     border-radius: 8px;
-    margin: 6px 0;
+}
+
+.pc-img-regen-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    border-radius: 50%;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s, background 0.2s, transform 0.15s;
+    font-size: 14px;
+    z-index: 10;
+    backdrop-filter: blur(4px);
+}
+
+.pc-img-wrap:hover .pc-img-regen-btn {
+    opacity: 1;
+}
+
+.pc-img-regen-btn:hover {
+    background: rgba(0, 0, 0, 0.85);
+    transform: scale(1.1);
+}
+
+.pc-img-regen-btn:active {
+    transform: scale(0.95);
 }
