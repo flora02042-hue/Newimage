@@ -1,0 +1,167 @@
+/* ═══════════════════════════════════════════════════════════════════
+   PictureCraft — Stylesheet
+   Completely new class names & structure (pc- prefix)
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Settings Panel ─────────────────────────────────────────────── */
+
+.pc-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.pc-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.pc-row > label {
+    min-width: 110px;
+    flex-shrink: 0;
+}
+
+.pc-col {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-bottom: 6px;
+}
+
+.pc-col > label {
+    font-size: .9em;
+    color: var(--SmartThemeBodyColor);
+}
+
+.pc-grow {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.pc-panel hr {
+    margin: 8px 0;
+    border: 0;
+    border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+.pc-panel h4 {
+    margin: 4px 0;
+    color: var(--SmartThemeBodyColor);
+}
+
+.pc-panel h5 {
+    margin: 6px 0 3px;
+    font-size: .95em;
+    color: var(--SmartThemeBodyColor);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pc-hint {
+    font-size: .83em;
+    color: var(--SmartThemeQuoteColor);
+    margin: 2px 0;
+}
+
+.pc-panel textarea.text_pole {
+    resize: vertical;
+    min-height: 46px;
+    font-family: inherit;
+}
+
+.pc-hidden {
+    display: none !important;
+}
+
+/* ── Nano-Banana Section ────────────────────────────────────────── */
+
+.pc-nano-block {
+    padding: 10px;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 6px;
+    margin-top: 4px;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────── */
+
+.pc-sync-btn {
+    padding: 4px 9px;
+    cursor: pointer;
+}
+
+.pc-spinning i {
+    animation: pc-rotate 0.8s linear infinite;
+}
+
+.pc-eye-btn {
+    padding: 4px 9px;
+    cursor: pointer;
+}
+
+/* ── Active fixed style highlight ───────────────────────────────── */
+
+#pc_perm_style_on:checked + span {
+    color: var(--SmartThemeQuoteColor);
+    font-weight: 700;
+}
+
+/* ── Progress Spinner ───────────────────────────────────────────── */
+
+.pc-progress-box {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 140px;
+    min-width: 140px;
+    max-width: 100%;
+    background: var(--SmartThemeBlurTintColor);
+    border: 2px dashed var(--SmartThemeBorderColor);
+    border-radius: 10px;
+    padding: 14px;
+    margin: 4px;
+    box-sizing: border-box;
+}
+
+.pc-ring {
+    width: 36px;
+    height: 36px;
+    border: 3px solid var(--SmartThemeBorderColor);
+    border-top-color: var(--SmartThemeBodyColor);
+    border-radius: 50%;
+    animation: pc-rotate 1s linear infinite;
+}
+
+.pc-progress-label {
+    margin-top: 8px;
+    font-size: .88em;
+    color: var(--SmartThemeQuoteColor);
+}
+
+@keyframes pc-rotate {
+    to { transform: rotate(360deg); }
+}
+
+/* ── Result Image ───────────────────────────────────────────────── */
+
+.pc-result-img {
+    max-width: 100%;
+    border-radius: 8px;
+    margin: 8px 0;
+}
+
+/* ── Failure Image ──────────────────────────────────────────────── */
+
+.pc-fail-img {
+    display: block;
+    max-width: 280px;
+    min-width: 180px;
+    min-height: 140px;
+    width: 100%;
+    height: auto;
+    border: 2px solid rgba(255, 90, 90, 0.5);
+    border-radius: 8px;
+    margin: 6px 0;
+}
