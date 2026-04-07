@@ -76,14 +76,6 @@ const INITIAL_CONFIG = Object.freeze({
     playerPicFilename: '',
     ratio: '1:1',
     resolution: '1K',
-    prefixPrompt: '',
-    exclusionPrompt: '',
-    permanentStyle: '',
-    permanentStyleOn: false,
-    parseCharLooks: true,
-    parsePlayerLooks: true,
-    scanOutfits: true,
-    outfitHistory: 5,
 });
 
 // ─── Settings Manager ────────────────────────────────────────────────────────
@@ -104,8 +96,7 @@ class ConfigManager {
     static persist() {
         const ctx = SillyTavern.getContext();
         ctx.saveSettingsDebounced();
-        const cfg = ctx.extensionSettings[PLUGIN_ID];
-        diag.info(`Config saved. style="${cfg?.permanentStyle || ''}", prefix="${(cfg?.prefixPrompt || '').slice(0,20)}", excl="${(cfg?.exclusionPrompt || '').slice(0,20)}"`);
+        diag.info('Config saved');
     }
 
     static verify() {
@@ -260,236 +251,19 @@ async function queryPlayerAvatarList() {
     }
 }
 
-// ─── Appearance Extractor ────────────────────────────────────────────────────
-
-class AppearanceAnalyzer {
-    static _traitPatterns = [
-        /(?:hair|волосы)[:\s]*([^.;,\n]{3,80})/gi,
-        /(?:has|have|with|имеет|с)\s+([a-zA-Zа-яА-Я\s]+(?:hair|волос[ыа]?))/gi,
-        /([a-zA-Zа-яА-Я\-]+(?:\s+[a-zA-Zа-яА-Я\-]+)?)\s+hair/gi,
-        /(?:eyes?|глаза?)[:\s]*([^.;,\n]{3,60})/gi,
-        /([a-zA-Zа-яА-Я\-]+)\s+eyes?/gi,
-        /(?:skin|кожа)[:\s]*([^.;,\n]{3,60})/gi,
-        /([a-zA-Zа-яА-Я\-]+)\s+skin/gi,
-        /(?:height|рост)[:\s]*([^.;,\n]{3,40})/gi,
-        /(?:tall|short|average|высок|низк|средн)[a-zA-Zа-яА-Я]*/gi,
-        /(?:build|телосложени)[:\s]*([^.;,\n]{3,40})/gi,
-        /(?:muscular|slim|athletic|thin|chubby|мускулист|стройн|худ|полн)[a-zA-Zа-яА-Я]*/gi,
-        /(?:looks?|appears?|выгляд)[a-zA-Zа-яА-Я]*\s+(?:like\s+)?(?:a\s+)?(\d+|young|old|teen|adult|молод|стар|подрост|взросл)/gi,
-        /(\d+)\s*(?:years?\s*old|лет|года?)/gi,
-        /(?:features?|черты)[:\s]*([^.;,\n]{3,80})/gi,
-        /(?:face|лицо)[:\s]*([^.;,\n]{3,60})/gi,
-        /(?:ears?|уши|ушки)[:\s]*([^.;,\n]{3,40})/gi,
-        /(?:tail|хвост)[:\s]*([^.;,\n]{3,40})/gi,
-        /(?:horns?|рога?)[:\s]*([^.;,\n]{3,40})/gi,
-        /(?:wings?|крыль[яи])[:\s]*([^.;,\n]{3,40})/gi,
-    ];
-
-    static _blockPatterns = [
-        /\[?(?:appearance|внешность|looks?)\]?[:\s]*([^[\]]{10,500})/gi,
-        /\[?(?:physical\s*description|физическое?\s*описание)\]?[:\s]*([^[\]]{10,500})/gi,
-    ];
-
-    static _collectTraits(text) {
-        const found = [];
-        const seen = new Set();
-
-        for (const rx of this._traitPatterns) {
-            rx.lastIndex = 0;
-            for (const m of text.matchAll(rx)) {
-                const t = (m[1] || m[0]).trim();
-                if (t.length > 2 && !seen.has(t.toLowerCase())) {
-                    seen.add(t.toLowerCase());
-                    found.push(t);
-                }
-            }
-        }
-
-        for (const rx of this._blockPatterns) {
-            rx.lastIndex = 0;
-            for (const m of text.matchAll(rx)) {
-                const block = m[1].trim();
-                if (block.length > 10 && !seen.has(block.toLowerCase())) {
-                    seen.add(block.toLowerCase());
-                    found.push(block);
-                }
-            }
-        }
-
-        return found;
-    }
-
-    static characterLooks() {
-        try {
-            const ctx = SillyTavern.getContext();
-            if (ctx.characterId == null) return null;
-            const ch = ctx.characters?.[ctx.characterId];
-            if (!ch?.description) return null;
-
-            const traits = this._collectTraits(ch.description);
-            if (!traits.length) return null;
-
-            const result = `${ch.name || 'Character'}'s appearance: ${traits.join(', ')}`;
-            diag.info(`Char looks extracted: ${result.slice(0, 200)}`);
-            return result;
-        } catch (e) {
-            diag.error('Char appearance extraction error:', e);
-            return null;
-        }
-    }
-
-    static playerLooks() {
-        try {
-            const ctx = SillyTavern.getContext();
-            const pName = ctx.name1 || 'User';
-            const desc = window.power_user?.persona_description;
-            if (!desc) return null;
-
-            const traits = this._collectTraits(desc);
-            if (!traits.length) {
-                if (desc.length < 500) {
-                    diag.info('Using full persona as player looks');
-                    return `${pName}'s appearance: ${desc}`;
-                }
-                return null;
-            }
-
-            const result = `${pName}'s appearance: ${traits.join(', ')}`;
-            diag.info(`Player looks extracted: ${result.slice(0, 200)}`);
-            return result;
-        } catch (e) {
-            diag.error('Player appearance extraction error:', e);
-            return null;
-        }
-    }
-}
-
-// ─── Outfit Scanner ──────────────────────────────────────────────────────────
-
-class OutfitScanner {
-    static _garmentRx = [
-        /(?:wearing|wears?|dressed\s+in|clothed\s+in|puts?\s+on|changed?\s+into)[:\s]+([^.;!?\n]{5,150})/gi,
-        /(?:outfit|clothes|clothing|attire|garment|dress|costume)[:\s]+([^.;!?\n]{5,150})/gi,
-        /(?:shirt|blouse|top|jacket|coat|sweater|hoodie|t-shirt|tank\s*top)[:\s]*([^.;!?\n]{3,100})/gi,
-        /(?:pants|jeans|shorts|skirt|trousers|leggings)[:\s]*([^.;!?\n]{3,100})/gi,
-        /(?:dress|gown|robe|uniform|suit|armor|armour)[:\s]*([^.;!?\n]{3,100})/gi,
-        /(?:a|an|the|his|her|their|my)\s+([\w\s\-]+(?:dress|shirt|jacket|coat|pants|jeans|skirt|blouse|sweater|hoodie|uniform|suit|armor|robe|gown|outfit|costume|clothes))/gi,
-        /(?:одет[аоы]?|носит|оделс?я?|переодел[аи]?сь?)[:\s]+([^.;!?\n]{5,150})/gi,
-        /(?:одежда|наряд|костюм|форма)[:\s]+([^.;!?\n]{5,150})/gi,
-        /(?:рубашк|блузк|куртк|пальто|свитер|худи|футболк|майк)[а-яА-Я]*[:\s]*([^.;!?\n]{3,100})/gi,
-        /(?:брюк|джинс|шорт|юбк|штан|леггинс)[а-яА-Я]*[:\s]*([^.;!?\n]{3,100})/gi,
-        /(?:платье|халат|мантия|униформа|доспех)[а-яА-Я]*[:\s]*([^.;!?\n]{3,100})/gi,
-    ];
-
-    static scan(depth = 5) {
-        try {
-            const ctx = SillyTavern.getContext();
-            const history = ctx.chat;
-            if (!history?.length) return null;
-
-            const charLabel = ctx.characters?.[ctx.characterId]?.name || 'Character';
-            const playerLabel = ctx.name1 || 'User';
-
-            const hits = [];
-            const seen = new Set();
-            const from = Math.max(0, history.length - depth);
-
-            for (let i = history.length - 1; i >= from; i--) {
-                const msg = history[i];
-                if (!msg.mes) continue;
-                const who = msg.is_user ? playerLabel : charLabel;
-
-                for (const rx of this._garmentRx) {
-                    rx.lastIndex = 0;
-                    for (const m of msg.mes.matchAll(rx)) {
-                        const piece = (m[1] || m[0]).trim();
-                        if (piece.length > 3 && !seen.has(piece.toLowerCase())) {
-                            seen.add(piece.toLowerCase());
-                            hits.push({ piece, who, idx: i });
-                        }
-                    }
-                }
-            }
-
-            if (!hits.length) return null;
-
-            const charWear = hits.filter(h => h.who === charLabel).map(h => h.piece);
-            const playerWear = hits.filter(h => h.who === playerLabel).map(h => h.piece);
-
-            let summary = '';
-            if (charWear.length) summary += `${charLabel} is wearing: ${charWear.slice(0, 3).join(', ')}. `;
-            if (playerWear.length) summary += `${playerLabel} is wearing: ${playerWear.slice(0, 3).join(', ')}.`;
-
-            diag.info(`Outfit scan: ${summary.slice(0, 200)}`);
-            return summary.trim();
-        } catch (e) {
-            diag.error('Outfit scan error:', e);
-            return null;
-        }
-    }
-}
-
-// ─── Prompt Composer ─────────────────────────────────────────────────────────
+// ─── Prompt Composer (simplified — no extra features) ────────────────────────
 
 class PromptComposer {
-    static assemble(baseText, styleHint, extra = {}) {
-        const ctx = SillyTavern.getContext();
-        const cfg = ctx.extensionSettings[PLUGIN_ID] || {};
-
-        diag.info('PromptComposer.assemble — current config snapshot:');
-        diag.info(`  permanentStyleOn=${cfg.permanentStyleOn}, permanentStyle="${cfg.permanentStyle || ''}"`);
-        diag.info(`  prefixPrompt="${(cfg.prefixPrompt || '').slice(0, 30)}…"`);
-        diag.info(`  exclusionPrompt="${(cfg.exclusionPrompt || '').slice(0, 30)}…"`);
-        diag.info(`  parseCharLooks=${cfg.parseCharLooks}, scanOutfits=${cfg.scanOutfits}`);
-
+    static assemble(baseText, styleHint) {
         const segments = [];
 
-        // 1 — locked style override
-        if (cfg.permanentStyleOn && cfg.permanentStyle?.trim()) {
-            segments.push(`[STYLE: ${cfg.permanentStyle.trim()}]`);
-            diag.info('✓ Locked style applied');
-        } else {
-            diag.info('✗ No locked style');
-        }
-
-        // 2 — user prefix
-        if (cfg.prefixPrompt?.trim()) {
-            segments.push(cfg.prefixPrompt.trim());
-            diag.info('✓ Prefix prompt applied');
-        }
-
-        // 3 — tag-level style (only when locked style is off)
-        if (styleHint && !(cfg.permanentStyleOn && cfg.permanentStyle?.trim())) {
+        // Tag-level style
+        if (styleHint) {
             segments.push(`[Style: ${styleHint}]`);
-            diag.info('✓ Tag style applied');
         }
 
-        // 4 — character appearance
-        if (cfg.parseCharLooks) {
-            const looks = AppearanceAnalyzer.characterLooks();
-            if (looks) segments.push(`[Character Reference: ${looks}]`);
-        }
-
-        // 5 — player appearance
-        if (cfg.parsePlayerLooks !== false) {
-            const pLooks = AppearanceAnalyzer.playerLooks();
-            if (pLooks) segments.push(`[User Reference: ${pLooks}]`);
-        }
-
-        // 6 — outfit context
-        if (cfg.scanOutfits) {
-            const outfit = OutfitScanner.scan(cfg.outfitHistory || 5);
-            if (outfit) segments.push(`[Current Clothing: ${outfit}]`);
-        }
-
-        // 7 — core prompt
+        // Core prompt
         segments.push(baseText);
-
-        // 8 — exclusion instructions
-        if (cfg.exclusionPrompt?.trim()) {
-            segments.push(`[AVOID: ${cfg.exclusionPrompt.trim()}]`);
-            diag.info('✓ Exclusion prompt applied');
-        }
 
         const composed = segments.join('\n\n');
         diag.info(`Composed prompt: ${composed.length} chars, ${segments.length} segments`);
@@ -503,7 +277,7 @@ class ArtworkBackend {
     static async callOpenAI(description, styleHint, refs = [], opts = {}) {
         const cfg = ConfigManager.load();
         const apiUrl = `${cfg.endpointUrl.replace(/\/$/, '')}/v1/images/generations`;
-        const composed = PromptComposer.assemble(description, styleHint, opts);
+        const composed = PromptComposer.assemble(description, styleHint);
 
         let dim = cfg.dimensions;
         if (opts.aspectRatio === '16:9') dim = '1792x1024';
@@ -573,7 +347,7 @@ class ArtworkBackend {
             contentParts.push({ inlineData: { mimeType: 'image/png', data: b64 } });
         }
 
-        let composed = PromptComposer.assemble(description, styleHint, opts);
+        let composed = PromptComposer.assemble(description, styleHint);
 
         if (refs.length > 0) {
             const refNote = '[CRITICAL: The reference image(s) above show the EXACT appearance of the character(s). You MUST precisely copy their: face structure, eye color, hair color and style, skin tone, body type, clothing, and all distinctive features. Do not deviate from the reference appearances.]';
@@ -668,10 +442,6 @@ class ArtworkBackend {
 // ─── Tag Scanner ─────────────────────────────────────────────────────────────
 
 class TagScanner {
-    /**
-     * Finds matching closing brace for JSON starting at `from` in `src`.
-     * Returns index past the closing brace, or -1 on failure.
-     */
     static _findJsonEnd(src, from) {
         let depth = 0, inStr = false, esc = false;
         for (let i = from; i < src.length; i++) {
@@ -687,24 +457,15 @@ class TagScanner {
         return -1;
     }
 
-    /** Decode common HTML entities in attribute values */
     static _decodeEntities(s) {
         return s
-            .replace(/&quot;/g, '"')
-            .replace(/&apos;/g, "'")
+            .replace(/"/g, '"')
+            .replace(/'/g, "'")
             .replace(/&#39;/g, "'")
             .replace(/&#34;/g, '"')
-            .replace(/&amp;/g, '&');
+            .replace(/&/g, '&');
     }
 
-    /**
-     * Scan text for generation instructions.
-     * @param {string} text — raw message text (may contain HTML)
-     * @param {object} opts
-     * @param {boolean} opts.verifyPaths — HEAD-check existing file paths
-     * @param {boolean} opts.includeAll — force-include even completed tags
-     * @returns {Promise<Array>}
-     */
     static async extract(text, opts = {}) {
         const { verifyPaths = false, includeAll = false } = opts;
         const results = [];
@@ -717,24 +478,20 @@ class TagScanner {
             const attrPos = text.indexOf(ATTR_KEY, cursor);
             if (attrPos < 0) break;
 
-            // Locate enclosing <img
             const openTag = text.lastIndexOf('<img', attrPos);
             if (openTag < 0 || attrPos - openTag > 500) { cursor = attrPos + 1; continue; }
 
-            // Locate JSON object
             const jsonIdx = text.indexOf('{', attrPos + ATTR_KEY.length);
             if (jsonIdx < 0 || jsonIdx > attrPos + ATTR_KEY.length + 10) { cursor = attrPos + 1; continue; }
 
             const jsonStop = this._findJsonEnd(text, jsonIdx);
             if (jsonStop < 0) { cursor = attrPos + 1; continue; }
 
-            // Locate end of <img ...>
             const closeAngle = text.indexOf('>', jsonStop);
             if (closeAngle < 0) { cursor = attrPos + 1; continue; }
             const fullTag = text.substring(openTag, closeAngle + 1);
             const rawJson = text.substring(jsonIdx, jsonStop);
 
-            // Inspect src attribute
             const srcRx = /src\s*=\s*["']?([^"'\s>]+)/i;
             const srcHit = fullTag.match(srcRx);
             const srcVal = srcHit ? srcHit[1] : '';
@@ -743,9 +500,7 @@ class TagScanner {
             const hasGenMarker = srcVal.includes('[IMG:GEN]') || srcVal.includes('[IMG:');
             const hasFilePath = srcVal && srcVal.startsWith('/') && srcVal.length > 5;
 
-            // Skip error images unless forced
             if (isErrorImg && !includeAll) {
-                diag.info(`Skipping error placeholder: ${srcVal.slice(0, 50)}`);
                 cursor = closeAngle + 1;
                 continue;
             }
@@ -860,16 +615,86 @@ function buildFailureWidget(uid, reason, tagData) {
     return el;
 }
 
+/**
+ * Wrap a generated image in a container with an individual regen button in the corner.
+ */
+function wrapImageWithRegenButton(imgEl, tag, messageId) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'pc-img-wrap';
+
+    const regenBtn = document.createElement('div');
+    regenBtn.className = 'pc-img-regen-btn';
+    regenBtn.title = 'Перегенерировать эту картинку';
+    regenBtn.innerHTML = '<i class="fa-solid fa-rotate"></i>';
+    regenBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+
+        const ctx = SillyTavern.getContext();
+        const message = ctx.chat[messageId];
+        if (!message) return;
+
+        const uid = `pc-single-${messageId}-${Date.now()}`;
+        const spinner = buildSpinner(uid);
+        wrapper.replaceWith(spinner);
+
+        try {
+            const statusEl = spinner.querySelector('.pc-progress-label');
+            const dataUri = await ArtworkBackend.produce(
+                tag.prompt, tag.style,
+                s => { statusEl.textContent = s; },
+                { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality },
+            );
+
+            statusEl.textContent = 'Сохранение...';
+            const filePath = await uploadGeneratedImage(dataUri);
+
+            const newImg = document.createElement('img');
+            newImg.className = 'pc-result-img';
+            newImg.src = filePath;
+            newImg.alt = tag.prompt;
+            newImg.title = `Style: ${tag.style}\nPrompt: ${tag.prompt}`;
+
+            if (tag.modern) {
+                const instrMatch = tag.raw.match(/data-iig-instruction\s*=\s*(['"])([\s\S]*?)\1/i);
+                if (instrMatch) newImg.setAttribute('data-iig-instruction', instrMatch[2]);
+            }
+
+            const newWrapper = wrapImageWithRegenButton(newImg, tag, messageId);
+            spinner.replaceWith(newWrapper);
+
+            // Update message.mes with new path
+            if (tag.modern) {
+                const oldSrc = imgEl.src;
+                // Find the tag in mes and update src
+                const srcPattern = oldSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                message.mes = message.mes.replace(new RegExp(`src=["']${srcPattern}["']`, 'i'), `src="${filePath}"`);
+            }
+
+            await ctx.saveChat();
+            toastr.success('Картинка перегенерирована', 'PictureCraft', { timeOut: 2000 });
+        } catch (err) {
+            diag.error('Single regen failed:', err.message);
+            const failWidget = buildFailureWidget(uid, err.message, tag);
+            spinner.replaceWith(failWidget);
+            toastr.error(`Ошибка: ${err.message}`, 'PictureCraft');
+        }
+    });
+
+    // Move the image inside wrapper
+    imgEl.parentNode?.insertBefore(wrapper, imgEl);
+    wrapper.appendChild(imgEl);
+    wrapper.appendChild(regenBtn);
+
+    return wrapper;
+}
+
 // ─── Message Processor ───────────────────────────────────────────────────────
 
 const _busyMessages = new Set();
 
 class MessageProcessor {
 
-    /**
-     * Locate a DOM target for the given tag inside mesTextEl.
-     * Uses multiple strategies for robustness.
-     */
     static _locateTarget(mesTextEl, tag, uid) {
         if (tag.modern) {
             const candidates = mesTextEl.querySelectorAll('img[data-iig-instruction]');
@@ -878,50 +703,26 @@ class MessageProcessor {
 
             for (const img of candidates) {
                 const attr = img.getAttribute('data-iig-instruction') || '';
-
-                // Strategy A — decoded attribute contains prompt prefix
                 const decoded = TagScanner._decodeEntities(attr);
-                if (decoded.includes(needle)) {
-                    diag.info('Target found via decoded-attribute match');
-                    return img;
-                }
-
-                // Strategy B — parse JSON inside attribute and compare prompt
+                if (decoded.includes(needle)) return img;
                 try {
                     const parsed = JSON.parse(decoded.replace(/'/g, '"'));
-                    if (parsed.prompt?.slice(0, 30) === needle) {
-                        diag.info('Target found via JSON prompt match');
-                        return img;
-                    }
+                    if (parsed.prompt?.slice(0, 30) === needle) return img;
                 } catch { /* skip */ }
-
-                // Strategy C — raw attribute contains prompt prefix
-                if (attr.includes(needle)) {
-                    diag.info('Target found via raw-attribute match');
-                    return img;
-                }
+                if (attr.includes(needle)) return img;
             }
 
-            // Strategy D — img with generation marker in src
             for (const img of candidates) {
                 const s = img.getAttribute('src') || '';
-                if (s.includes('[IMG:GEN]') || s.includes('[IMG:') || s === '' || s === '#') {
-                    diag.info('Target found via src marker');
-                    return img;
-                }
+                if (s.includes('[IMG:GEN]') || s.includes('[IMG:') || s === '' || s === '#') return img;
             }
 
-            // Strategy E — broader search in all imgs
             for (const img of mesTextEl.querySelectorAll('img')) {
                 const s = img.getAttribute('src') || '';
-                if (s.includes('[IMG:GEN]') || s.includes('[IMG:ERROR]')) {
-                    diag.info('Target found via broad img scan');
-                    return img;
-                }
+                if (s.includes('[IMG:GEN]') || s.includes('[IMG:ERROR]')) return img;
             }
         } else {
-            // Legacy — replace text marker with a span placeholder
-            const escaped = tag.raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/"/g, '(?:"|&quot;)');
+            const escaped = tag.raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/"/g, '(?:"|")');
             const before = mesTextEl.innerHTML;
             mesTextEl.innerHTML = mesTextEl.innerHTML.replace(
                 new RegExp(escaped, 'g'),
@@ -929,24 +730,15 @@ class MessageProcessor {
             );
             if (before !== mesTextEl.innerHTML) {
                 const slot = mesTextEl.querySelector(`[data-pc-slot="${uid}"]`);
-                if (slot) { diag.info('Legacy placeholder injected'); return slot; }
+                if (slot) return slot;
             }
-
-            // Fallback — img whose src contains the legacy marker
             for (const img of mesTextEl.querySelectorAll('img')) {
-                if (img.src?.includes('[IMG:GEN:')) {
-                    diag.info('Legacy img with marker found');
-                    return img;
-                }
+                if (img.src?.includes('[IMG:GEN:')) return img;
             }
         }
-
         return null;
     }
 
-    /**
-     * Process a single tag: show spinner → generate → replace with result.
-     */
     static async _handleTag(tag, idx, mesTextEl, message, messageId) {
         const uid = `pc-${messageId}-${idx}`;
         diag.info(`Processing tag ${idx}: "${tag.raw.slice(0, 50)}"`);
@@ -980,7 +772,6 @@ class MessageProcessor {
             statusEl.textContent = 'Сохранение...';
             const filePath = await uploadGeneratedImage(dataUri);
 
-            // Build result image element
             const pic = document.createElement('img');
             pic.className = 'pc-result-img';
             pic.src = filePath;
@@ -992,7 +783,72 @@ class MessageProcessor {
                 if (instrMatch) pic.setAttribute('data-iig-instruction', instrMatch[2]);
             }
 
-            spinner.replaceWith(pic);
+            // Wrap image with individual regen button
+            const wrapped = document.createElement('div');
+            wrapped.className = 'pc-img-wrap';
+            const regenBtn = document.createElement('div');
+            regenBtn.className = 'pc-img-regen-btn';
+            regenBtn.title = 'Перегенерировать эту картинку';
+            regenBtn.innerHTML = '<i class="fa-solid fa-rotate"></i>';
+            regenBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                // Re-use single image regeneration
+                const ctx = SillyTavern.getContext();
+                const msg = ctx.chat[messageId];
+                if (!msg) return;
+
+                const reUid = `pc-single-${messageId}-${Date.now()}`;
+                const reSpinner = buildSpinner(reUid);
+                wrapped.replaceWith(reSpinner);
+
+                try {
+                    const reStatusEl = reSpinner.querySelector('.pc-progress-label');
+                    const reDataUri = await ArtworkBackend.produce(
+                        tag.prompt, tag.style,
+                        s => { reStatusEl.textContent = s; },
+                        { aspectRatio: tag.aspectRatio, imageSize: tag.imageSize, quality: tag.quality },
+                    );
+                    reStatusEl.textContent = 'Сохранение...';
+                    const reFilePath = await uploadGeneratedImage(reDataUri);
+
+                    const newPic = document.createElement('img');
+                    newPic.className = 'pc-result-img';
+                    newPic.src = reFilePath;
+                    newPic.alt = tag.prompt;
+                    if (tag.modern) {
+                        const iMatch = tag.raw.match(/data-iig-instruction\s*=\s*(['"])([\s\S]*?)\1/i);
+                        if (iMatch) newPic.setAttribute('data-iig-instruction', iMatch[2]);
+                    }
+
+                    // Create new wrapper
+                    const newWrap = document.createElement('div');
+                    newWrap.className = 'pc-img-wrap';
+                    const newBtn = regenBtn.cloneNode(true);
+                    // Re-attach event (clone doesn't copy listeners) — use same logic
+                    newBtn.addEventListener('click', regenBtn.onclick);
+                    newWrap.appendChild(newPic);
+                    newWrap.appendChild(newBtn);
+                    reSpinner.replaceWith(newWrap);
+
+                    // Update mes
+                    if (tag.modern) {
+                        const updated = tag.raw.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${reFilePath}"`);
+                        msg.mes = msg.mes.replace(tag.raw, updated);
+                    }
+                    await ctx.saveChat();
+                    toastr.success('Картинка перегенерирована', 'PictureCraft', { timeOut: 2000 });
+                } catch (err) {
+                    diag.error('Single regen failed:', err.message);
+                    const failW = buildFailureWidget(reUid, err.message, tag);
+                    reSpinner.replaceWith(failW);
+                    toastr.error(`Ошибка: ${err.message}`, 'PictureCraft');
+                }
+            });
+
+            wrapped.appendChild(pic);
+            wrapped.appendChild(regenBtn);
+            spinner.replaceWith(wrapped);
 
             // Persist path into message.mes
             if (tag.modern) {
@@ -1009,7 +865,6 @@ class MessageProcessor {
             const failWidget = buildFailureWidget(uid, err.message, tag);
             spinner.replaceWith(failWidget);
 
-            // Mark failure in message.mes
             if (tag.modern) {
                 const errTag = tag.raw.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${FALLBACK_IMG}"`);
                 message.mes = message.mes.replace(tag.raw, errTag);
@@ -1022,9 +877,6 @@ class MessageProcessor {
         }
     }
 
-    /**
-     * Scan and process all generation tags in a message.
-     */
     static async processMessage(messageId) {
         const ctx = SillyTavern.getContext();
         const cfg = ConfigManager.load();
@@ -1062,16 +914,12 @@ class MessageProcessor {
 
         await ctx.saveChat();
 
-        // Re-render if possible
         if (typeof ctx.messageFormatting === 'function') {
             const formatted = ctx.messageFormatting(message.mes, message.name, message.is_system, message.is_user, messageId);
             mesText.innerHTML = formatted;
         }
     }
 
-    /**
-     * Regenerate all images in a message (user-triggered).
-     */
     static async regenerate(messageId) {
         const ctx = SillyTavern.getContext();
         const message = ctx.chat[messageId];
@@ -1098,8 +946,14 @@ class MessageProcessor {
                 if (!existing) continue;
 
                 const instrAttr = existing.getAttribute('data-iig-instruction');
+                // Remove wrapper if exists
+                const parentWrap = existing.closest('.pc-img-wrap');
                 const spinner = buildSpinner(uid);
-                existing.replaceWith(spinner);
+                if (parentWrap) {
+                    parentWrap.replaceWith(spinner);
+                } else {
+                    existing.replaceWith(spinner);
+                }
 
                 const statusEl = spinner.querySelector('.pc-progress-label');
                 const dataUri = await ArtworkBackend.produce(
@@ -1116,7 +970,13 @@ class MessageProcessor {
                 pic.src = filePath;
                 pic.alt = tag.prompt;
                 if (instrAttr) pic.setAttribute('data-iig-instruction', instrAttr);
-                spinner.replaceWith(pic);
+
+                // Wrap with regen button
+                const wrap = document.createElement('div');
+                wrap.className = 'pc-img-wrap';
+                wrap.appendChild(pic);
+                // Note: individual regen button will be re-added via processMessage flow
+                spinner.replaceWith(wrap);
 
                 const updated = tag.raw.replace(/src\s*=\s*(['"])[^'"]*\1/i, `src="${filePath}"`);
                 message.mes = message.mes.replace(tag.raw, updated);
@@ -1134,7 +994,7 @@ class MessageProcessor {
     }
 }
 
-// ─── Regenerate Button Injection ─────────────────────────────────────────────
+// ─── Regenerate Button Injection (message menu) ──────────────────────────────
 
 function injectRegenButton(mesElement, mesId) {
     if (mesElement.querySelector('.pc-regen-btn')) return;
@@ -1143,7 +1003,7 @@ function injectRegenButton(mesElement, mesId) {
 
     const btn = document.createElement('div');
     btn.className = 'mes_button pc-regen-btn fa-solid fa-images interactable';
-    btn.title = 'Перегенерировать изображения';
+    btn.title = 'Перегенерировать все изображения';
     btn.tabIndex = 0;
     btn.addEventListener('click', e => {
         e.stopPropagation();
@@ -1190,6 +1050,11 @@ function assemblePanel() {
     const cfg = ConfigManager.load();
     const root = document.getElementById('extensions_settings');
     if (!root) { diag.error('Settings container missing'); return; }
+
+    const avatarPreviewSrc = cfg.playerPicFilename
+        ? `/User Avatars/${encodeURIComponent(cfg.playerPicFilename)}`
+        : '';
+    const avatarPreviewHidden = cfg.playerPicFilename ? '' : 'pc-hidden';
 
     const markup = `
     <div class="inline-drawer">
@@ -1266,45 +1131,18 @@ function assemblePanel() {
                     <p class="pc-hint">Аватарки отправляются как образцы для соблюдения внешности.</p>
                     <label class="checkbox_label"><input type="checkbox" id="pc_char_pic" ${cfg.includeCharPic?'checked':''}><span>Аватар {{char}}</span></label>
                     <label class="checkbox_label"><input type="checkbox" id="pc_player_pic" ${cfg.includePlayerPic?'checked':''}><span>Аватар {{user}}</span></label>
-                    <div id="pc_avatar_row" class="pc-row ${!cfg.includePlayerPic?'pc-hidden':''}" style="margin-top:5px">
+                    <div id="pc_avatar_row" class="pc-row ${!cfg.includePlayerPic?'pc-hidden':''}" style="margin-top:5px;align-items:flex-start;">
                         <label for="pc_avatar_file">Файл аватара</label>
-                        <select id="pc_avatar_file" class="pc-grow">
-                            <option value="">— нет —</option>
-                            ${cfg.playerPicFilename ? `<option value="${cfg.playerPicFilename}" selected>${cfg.playerPicFilename}</option>` : ''}
-                        </select>
-                        <div id="pc_reload_avatars" class="menu_button pc-sync-btn" title="Обновить"><i class="fa-solid fa-sync"></i></div>
-                    </div>
-                    <hr>
-                    <h5>🎨 Промпты</h5>
-                    <p class="pc-hint">Prefix — добавляется перед описанием, Exclusion — инструкция избегания.</p>
-                    <div class="pc-col">
-                        <label for="pc_prefix">Prefix-промпт</label>
-                        <textarea id="pc_prefix" class="text_pole" rows="2" placeholder="masterpiece, best quality...">${cfg.prefixPrompt||''}</textarea>
-                    </div>
-                    <div class="pc-col">
-                        <label for="pc_exclusion">Exclusion-промпт</label>
-                        <textarea id="pc_exclusion" class="text_pole" rows="2" placeholder="low quality, blurry...">${cfg.exclusionPrompt||''}</textarea>
-                    </div>
-                    <hr>
-                    <h5>🖼️ Закреплённый стиль</h5>
-                    <p class="pc-hint">Стиль применяется ко всем генерациям без исключений.</p>
-                    <label class="checkbox_label"><input type="checkbox" id="pc_perm_style_on" ${cfg.permanentStyleOn?'checked':''}><span>Активировать</span></label>
-                    <div class="pc-col" style="margin-top:5px">
-                        <label for="pc_perm_style">Стиль</label>
-                        <input type="text" id="pc_perm_style" class="text_pole" value="${cfg.permanentStyle||''}" placeholder="Anime semi-realistic style...">
-                    </div>
-                    <hr>
-                    <h5>👤 Анализ внешности</h5>
-                    <p class="pc-hint">Автоматическое извлечение описания из карточек.</p>
-                    <label class="checkbox_label"><input type="checkbox" id="pc_char_looks" ${cfg.parseCharLooks?'checked':''}><span>Внешность {{char}}</span></label>
-                    <label class="checkbox_label"><input type="checkbox" id="pc_player_looks" ${cfg.parsePlayerLooks!==false?'checked':''}><span>Внешность {{user}}</span></label>
-                    <hr>
-                    <h5>👕 Сканирование одежды</h5>
-                    <p class="pc-hint">Поиск упоминаний одежды в последних сообщениях.</p>
-                    <label class="checkbox_label"><input type="checkbox" id="pc_outfits" ${cfg.scanOutfits?'checked':''}><span>Сканировать одежду</span></label>
-                    <div class="pc-row" style="margin-top:5px">
-                        <label for="pc_outfit_depth">Глубина (сообщ.)</label>
-                        <input type="number" id="pc_outfit_depth" class="text_pole pc-grow" value="${cfg.outfitHistory||5}" min="1" max="20">
+                        <div class="pc-grow" style="display:flex;flex-direction:column;gap:6px;">
+                            <div style="display:flex;gap:6px;align-items:center;">
+                                <select id="pc_avatar_file" class="pc-grow">
+                                    <option value="">— нет —</option>
+                                    ${cfg.playerPicFilename ? `<option value="${cfg.playerPicFilename}" selected>${cfg.playerPicFilename}</option>` : ''}
+                                </select>
+                                <div id="pc_reload_avatars" class="menu_button pc-sync-btn" title="Обновить"><i class="fa-solid fa-sync"></i></div>
+                            </div>
+                            <img id="pc_avatar_preview" class="pc-avatar-thumb ${avatarPreviewHidden}" src="${avatarPreviewSrc}" alt="Превью аватара">
+                        </div>
                     </div>
                 </div>
                 <hr>
@@ -1394,7 +1232,21 @@ function wireUpPanel() {
         $('pc_avatar_row')?.classList.toggle('pc-hidden', !e.target.checked);
     });
 
-    $('pc_avatar_file')?.addEventListener('change', e => { cfg.playerPicFilename = e.target.value; ConfigManager.persist(); });
+    $('pc_avatar_file')?.addEventListener('change', e => {
+        cfg.playerPicFilename = e.target.value;
+        ConfigManager.persist();
+        // Update avatar preview
+        const preview = $('pc_avatar_preview');
+        if (preview) {
+            if (e.target.value) {
+                preview.src = `/User Avatars/${encodeURIComponent(e.target.value)}`;
+                preview.classList.remove('pc-hidden');
+            } else {
+                preview.src = '';
+                preview.classList.add('pc-hidden');
+            }
+        }
+    });
 
     $('pc_reload_avatars')?.addEventListener('click', async e => {
         const btn = e.currentTarget;
@@ -1410,23 +1262,15 @@ function wireUpPanel() {
                 sel.appendChild(opt);
             }
             toastr.success(`Аватаров: ${avatars.length}`, 'PictureCraft');
+            // Update preview
+            const preview = $('pc_avatar_preview');
+            if (preview && cur) {
+                preview.src = `/User Avatars/${encodeURIComponent(cur)}`;
+                preview.classList.remove('pc-hidden');
+            }
         } finally { btn.classList.remove('pc-spinning'); }
     });
 
-    $('pc_prefix')?.addEventListener('input', e => { cfg.prefixPrompt = e.target.value; ConfigManager.persist(); });
-    $('pc_exclusion')?.addEventListener('input', e => { cfg.exclusionPrompt = e.target.value; ConfigManager.persist(); });
-
-    $('pc_perm_style_on')?.addEventListener('change', e => {
-        cfg.permanentStyleOn = e.target.checked;
-        ConfigManager.persist();
-        if (e.target.checked && cfg.permanentStyle) toastr.info(`Стиль: ${cfg.permanentStyle}`, 'PictureCraft');
-    });
-    $('pc_perm_style')?.addEventListener('input', e => { cfg.permanentStyle = e.target.value; ConfigManager.persist(); });
-
-    $('pc_char_looks')?.addEventListener('change', e => { cfg.parseCharLooks = e.target.checked; ConfigManager.persist(); });
-    $('pc_player_looks')?.addEventListener('change', e => { cfg.parsePlayerLooks = e.target.checked; ConfigManager.persist(); });
-    $('pc_outfits')?.addEventListener('change', e => { cfg.scanOutfits = e.target.checked; ConfigManager.persist(); });
-    $('pc_outfit_depth')?.addEventListener('input', e => { cfg.outfitHistory = parseInt(e.target.value) || 5; ConfigManager.persist(); });
     $('pc_attempts')?.addEventListener('input', e => { cfg.maxAttempts = parseInt(e.target.value) || 0; ConfigManager.persist(); });
     $('pc_pause')?.addEventListener('input', e => { cfg.pauseBetween = parseInt(e.target.value) || 1000; ConfigManager.persist(); });
     $('pc_dump_logs')?.addEventListener('click', () => diag.download());
